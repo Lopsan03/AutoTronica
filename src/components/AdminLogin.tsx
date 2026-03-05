@@ -48,7 +48,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              placeholder="LOPSAN"
+              placeholder="Ingresa tu usuario"
             />
           </label>
 
