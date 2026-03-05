@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import Button from './Button';
 import { ClientFormData, ClientRecord, ClientServiceRecord, ClientServiceRecordFormData } from '../types';
 import { supabase } from '../lib/supabase';
@@ -109,6 +109,7 @@ const buildFilePath = (clientId: string, fileName: string) => {
 };
 
 const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) => {
+  const vehicleImageInputId = useId();
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [services, setServices] = useState<ClientServiceRecord[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -898,12 +899,24 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
               </label>
               <label className="text-sm font-medium text-gray-700 sm:col-span-2">
                 Foto del vehículo
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => setClientImageFile(event.target.files?.[0] ?? null)}
-                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-slate-900 file:mr-3 file:rounded file:border-0 file:bg-brand-100 file:px-3 file:py-2 file:text-brand-700"
-                />
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <input
+                    id={vehicleImageInputId}
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => setClientImageFile(event.target.files?.[0] ?? null)}
+                    className="sr-only"
+                  />
+                  <label
+                    htmlFor={vehicleImageInputId}
+                    className="inline-flex cursor-pointer items-center rounded-md border border-brand-300 bg-brand-50 px-4 py-2 text-sm font-medium text-brand-700 transition-colors hover:bg-brand-100"
+                  >
+                    Seleccionar foto
+                  </label>
+                  <span className="text-sm text-gray-600">
+                    {clientImageFile ? clientImageFile.name : 'Ningún archivo seleccionado'}
+                  </span>
+                </div>
                 {clientForm.vehicleImageUrl && !clientImageFile && (
                   <img
                     src={clientForm.vehicleImageUrl}
