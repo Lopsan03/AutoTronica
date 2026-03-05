@@ -6,15 +6,25 @@ interface AdminLoginProps {
 }
 
 const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
+  const expectedUsername = import.meta.env.VITE_ADMIN_USERNAME;
+  const expectedPassword = import.meta.env.VITE_ADMIN_PASSWORD;
+
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
+  const isConfigMissing = !expectedUsername || !expectedPassword;
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (isConfigMissing) {
+      setError('Falta configuración de administrador en variables de entorno.');
+      return;
+    }
+
     const normalizedUsername = username.trim().toUpperCase();
-    if (normalizedUsername === 'LOPSAN' && password === 'asj@fsk3ff') {
+    if (normalizedUsername === expectedUsername.trim().toUpperCase() && password === expectedPassword) {
       setError('');
       onLogin();
       return;
@@ -55,6 +65,11 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
           </label>
 
           {error && <p className="text-sm text-red-700">{error}</p>}
+          {isConfigMissing && (
+            <p className="text-sm text-red-700">
+              Define `VITE_ADMIN_USERNAME` y `VITE_ADMIN_PASSWORD` en tu entorno.
+            </p>
+          )}
 
           <div className="flex gap-2 pt-2">
             <Button type="button" variant="outline" fullWidth onClick={() => (window.location.href = '/')}>
