@@ -51,3 +51,20 @@ export enum FormStatus {
   SUCCESS = 'SUCCESS',
   ERROR = 'ERROR'
 }
+
+export interface ClientServiceRecord {
+  id: string;
+  cliente: string;
+  telefono: string;
+  vehiculo: string;
+  modelo: string;
+  anio: number;
+  placas: string;
+  km: number;
+  servicioRealizado: string;
+  fechaServicio: string;
+  proximoServicioKm: number;
+  proximaFecha: string;
+}
+
+export type ClientServiceRecordFormData = Omit<ClientServiceRecord, 'id'>;
