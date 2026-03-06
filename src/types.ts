@@ -70,8 +70,8 @@ export interface ClientServiceRecord {
   servicioRealizado: string;
   fechaServicio: string;
   kmServicio: number;
-  proximoServicioKm: number;
-  proximaFecha: string;
+  proximoServicioKm: number | null;
+  proximaFecha: string | null;
 }
 
 export type ClientFormData = Omit<ClientRecord, 'id'>;

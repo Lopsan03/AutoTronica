@@ -31,8 +31,8 @@ type ServiceRow = {
   servicio_realizado: string;
   fecha_servicio: string;
   km_servicio: number;
-  proximo_servicio_km: number;
-  proxima_fecha: string;
+  proximo_servicio_km: number | null;
+  proxima_fecha: string | null;
   created_at: string;
 };
 
@@ -56,8 +56,49 @@ const INITIAL_SERVICE_FORM: ClientServiceRecordFormData = {
   servicioRealizado: '',
   fechaServicio: '',
   kmServicio: 0,
-  proximoServicioKm: 0,
-  proximaFecha: '',
+  proximoServicioKm: null,
+  proximaFecha: null,
+};
+
+const SERVICE_INTERVALS: Record<string, { km: number | null; dias: number | null }> = {
+  'Revisión general multipunto': { km: 5000, dias: 104 },
+  'Cambio de aceite y filtro': { km: 7500, dias: 156 },
+  'Revisión de batería': { km: 7500, dias: 156 },
+  'Revisión sistema de carga (alternador)': { km: 20000, dias: 417 },
+  'Revisión de frenos': { km: 10000, dias: 208 },
+  'Cambio filtro de aire motor': { km: 12500, dias: 260 },
+  'Cambio filtro de cabina': { km: 12500, dias: 260 },
+  'Revisión suspensión y dirección': { km: 20000, dias: 417 },
+  'Limpieza cuerpo de aceleración': { km: 25000, dias: 521 },
+  'Limpieza sensor MAF': { km: 25000, dias: 521 },
+  'Limpieza de inyectores': { km: 30000, dias: 625 },
+  'Cambio bujías convencionales': { km: 30000, dias: 625 },
+  'Cambio bujías iridium/platinum': { km: 90000, dias: 1875 },
+  'Cambio válvula PCV': { km: 50000, dias: 1042 },
+  'Cambio líquido de frenos': { km: 40000, dias: 833 },
+  'Cambio anticongelante': { km: 50000, dias: 1042 },
+  'Cambio aceite transmisión automática': { km: 65000, dias: 1354 },
+  'Cambio aceite transmisión manual': { km: 80000, dias: 1667 },
+  'Cambio banda serpentina': { km: 80000, dias: 1667 },
+  'Cambio de balatas': { km: 50000, dias: 1042 },
+  'Rectificación de discos': { km: 50000, dias: 1042 },
+  'Cambio de discos de freno': { km: 120000, dias: 2500 },
+  'Cambio de batería': { km: 60000, dias: 1460 },
+  'Cambio amortiguadores': { km: 90000, dias: 1875 },
+  'Cambio soportes de motor': { km: 100000, dias: 2083 },
+  'Cambio bomba de agua': { km: 120000, dias: 2500 },
+  'Diagnóstico con escáner OBD2': { km: null, dias: null },
+  'Diagnóstico de vibración': { km: null, dias: null },
+  'Diagnóstico sistema eléctrico': { km: null, dias: null },
+  'Diagnóstico consumo de combustible': { km: null, dias: null },
+  'Diagnóstico sistema de carga': { km: null, dias: null },
+  'Falla en el motor': { km: null, dias: null },
+  'Falla en transmisión': { km: null, dias: null },
+  'Fuga de anticongelante': { km: null, dias: null },
+  'Fuga de líquido de frenos': { km: null, dias: null },
+  'Luz de check engine': { km: null, dias: null },
+  'Cambio alternador': { km: null, dias: null },
+  'Cambio motor de arranque': { km: null, dias: null },
 };
 
 const mapClientRow = (row: ClientRow): ClientRecord => ({
@@ -82,20 +123,30 @@ const mapServiceRow = (row: ServiceRow): ClientServiceRecord => ({
   proximaFecha: row.proxima_fecha,
 });
 
-const formatDate = (value: string) => {
+const formatDate = (value: string | null) => {
   if (!value) {
     return '-';
   }
   return new Date(`${value}T00:00:00`).toLocaleDateString('es-MX');
 };
 
-const isNextDateNear = (nextDate: string) => {
+const isNextDateNear = (nextDate: string | null) => {
+  if (!nextDate) {
+    return false;
+  }
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const limit = new Date(today);
   limit.setDate(limit.getDate() + 14);
   const target = new Date(nextDate);
   return target >= today && target <= limit;
+};
+
+const addDays = (dateString: string, days: number) => {
+  const date = new Date(`${dateString}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
 };
 
 const parseNumber = (value: string) => {
@@ -142,6 +193,14 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
   const clientById = useMemo(() => {
     return new Map(clients.map((client) => [client.id, client]));
   }, [clients]);
+
+  const serviceOptions = useMemo(() => {
+    const options = Object.keys(SERVICE_INTERVALS);
+    if (serviceForm.servicioRealizado && !options.includes(serviceForm.servicioRealizado)) {
+      return [serviceForm.servicioRealizado, ...options];
+    }
+    return options;
+  }, [serviceForm.servicioRealizado]);
 
   const filteredServices = useMemo(() => {
     const normalized = searchService.trim().toLowerCase();
@@ -269,6 +328,27 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
     }
     void loadServices();
   }, []);
+
+  useEffect(() => {
+    const selectedInterval = SERVICE_INTERVALS[serviceForm.servicioRealizado];
+
+    if (!selectedInterval || !serviceForm.fechaServicio || !Number.isFinite(serviceForm.kmServicio)) {
+      setServiceForm((previous) => ({
+        ...previous,
+        proximoServicioKm: null,
+        proximaFecha: null,
+      }));
+      return;
+    }
+
+    setServiceForm((previous) => ({
+      ...previous,
+      proximoServicioKm:
+        selectedInterval.km === null ? null : serviceForm.kmServicio + selectedInterval.km,
+      proximaFecha:
+        selectedInterval.dias === null ? null : addDays(serviceForm.fechaServicio, selectedInterval.dias),
+    }));
+  }, [serviceForm.servicioRealizado, serviceForm.kmServicio, serviceForm.fechaServicio]);
 
   const closeClientModal = () => {
     if (isSaving) {
@@ -758,7 +838,8 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
                         return null;
                       }
 
-                      const kmDue = relatedClient.kmActual >= service.proximoServicioKm;
+                      const kmDue =
+                        service.proximoServicioKm !== null && relatedClient.kmActual >= service.proximoServicioKm;
                       const nearDate = isNextDateNear(service.proximaFecha);
                       const rowClass = kmDue ? 'bg-red-50' : nearDate ? 'bg-amber-50' : '';
 
@@ -777,7 +858,9 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
                             {service.kmServicio.toLocaleString('es-MX')}
                           </td>
                           <td className="whitespace-nowrap px-3 py-3">
-                            {service.proximoServicioKm.toLocaleString('es-MX')}
+                            {service.proximoServicioKm === null
+                              ? '-'
+                              : service.proximoServicioKm.toLocaleString('es-MX')}
                           </td>
                           <td className="whitespace-nowrap px-3 py-3">{formatDate(service.proximaFecha)}</td>
                           <td className="whitespace-nowrap px-3 py-3 text-xs font-semibold text-slate-700">
@@ -890,7 +973,8 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
                   required
                   type="number"
                   min={0}
-                  value={clientForm.kmActual}
+                  value={clientForm.kmActual === 0 ? '' : clientForm.kmActual}
+                  placeholder="Ingresa km actual"
                   onChange={(event) =>
                     setClientForm((previous) => ({ ...previous, kmActual: parseNumber(event.target.value) }))
                   }
@@ -969,14 +1053,21 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
               </label>
               <label className="text-sm font-medium text-gray-700 sm:col-span-2">
                 Servicio realizado
-                <input
+                <select
                   required
                   value={serviceForm.servicioRealizado}
                   onChange={(event) =>
                     setServiceForm((previous) => ({ ...previous, servicioRealizado: event.target.value }))
                   }
                   className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
+                >
+                  <option value="">Selecciona un servicio</option>
+                  {serviceOptions.map((serviceName) => (
+                    <option key={serviceName} value={serviceName}>
+                      {serviceName}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="text-sm font-medium text-gray-700">
                 Fecha de servicio
@@ -996,7 +1087,8 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
                   required
                   type="number"
                   min={0}
-                  value={serviceForm.kmServicio}
+                  value={serviceForm.kmServicio === 0 ? '' : serviceForm.kmServicio}
+                  placeholder="Ingresa km del servicio"
                   onChange={(event) =>
                     setServiceForm((previous) => ({ ...previous, kmServicio: parseNumber(event.target.value) }))
                   }
@@ -1006,26 +1098,25 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
               <label className="text-sm font-medium text-gray-700">
                 Próximo servicio (km/millas)
                 <input
-                  required
-                  type="number"
-                  min={0}
-                  value={serviceForm.proximoServicioKm}
-                  onChange={(event) =>
-                    setServiceForm((previous) => ({ ...previous, proximoServicioKm: parseNumber(event.target.value) }))
+                  type="text"
+                  value={
+                    serviceForm.proximoServicioKm === null
+                      ? ''
+                      : serviceForm.proximoServicioKm.toLocaleString('es-MX')
                   }
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  readOnly
+                  placeholder="Se calcula automáticamente"
+                  className="mt-1 w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-slate-900"
                 />
               </label>
               <label className="text-sm font-medium text-gray-700">
                 Próxima fecha
                 <input
-                  required
-                  type="date"
-                  value={serviceForm.proximaFecha}
-                  onChange={(event) =>
-                    setServiceForm((previous) => ({ ...previous, proximaFecha: event.target.value }))
-                  }
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  type="text"
+                  value={serviceForm.proximaFecha ?? ''}
+                  readOnly
+                  placeholder="Se calcula automáticamente"
+                  className="mt-1 w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-slate-900"
                 />
               </label>
               <div className="sm:col-span-2 flex flex-wrap justify-end gap-2 pt-2">

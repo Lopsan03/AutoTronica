@@ -25,11 +25,15 @@ create table if not exists public.client_services (
   servicio_realizado text not null,
   fecha_servicio date not null,
   km_servicio integer not null,
-  proximo_servicio_km integer not null,
-  proxima_fecha date not null,
+  proximo_servicio_km integer,
+  proxima_fecha date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table if exists public.client_services
+  alter column proximo_servicio_km drop not null,
+  alter column proxima_fecha drop not null;
 
 create index if not exists idx_client_services_client_id on public.client_services(client_id);
 create index if not exists idx_clients_search on public.clients(cliente, telefono, placas, vehiculo, modelo);
