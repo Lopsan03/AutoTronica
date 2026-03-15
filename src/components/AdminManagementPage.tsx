@@ -143,10 +143,47 @@ const isNextDateNear = (nextDate: string | null) => {
   return target >= today && target <= limit;
 };
 
+type DateUrgency = 'none' | 'on-time' | 'near' | 'due';
+
+const getDateUrgency = (nextDate: string | null): DateUrgency => {
+  if (!nextDate) {
+    return 'none';
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const target = new Date(`${nextDate}T00:00:00`);
+  if (target < today) {
+    return 'due';
+  }
+
+  if (isNextDateNear(nextDate)) {
+    return 'near';
+  }
+
+  return 'on-time';
+};
+
 const addDays = (dateString: string, days: number) => {
   const date = new Date(`${dateString}T00:00:00`);
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
+};
+
+const calculateServiceProjection = (serviceName: string, fechaServicio: string, kmServicio: number) => {
+  const selectedInterval = SERVICE_INTERVALS[serviceName];
+  if (!selectedInterval || !fechaServicio || !Number.isFinite(kmServicio)) {
+    return {
+      proximoServicioKm: null as number | null,
+      proximaFecha: null as string | null,
+    };
+  }
+
+  return {
+    proximoServicioKm: selectedInterval.km === null ? null : kmServicio + selectedInterval.km,
+    proximaFecha: selectedInterval.dias === null ? null : addDays(fechaServicio, selectedInterval.dias),
+  };
 };
 
 const parseNumber = (value: string) => {
@@ -181,6 +218,9 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [serviceForm, setServiceForm] = useState<ClientServiceRecordFormData>(INITIAL_SERVICE_FORM);
+  const [batchServiceForm, setBatchServiceForm] = useState({ fechaServicio: '', kmServicio: 0 });
+  const [batchServiceSelection, setBatchServiceSelection] = useState('');
+  const [batchSelectedServices, setBatchSelectedServices] = useState<string[]>([]);
   const [selectedServiceClientId, setSelectedServiceClientId] = useState('');
 
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
@@ -350,6 +390,22 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
     }));
   }, [serviceForm.servicioRealizado, serviceForm.kmServicio, serviceForm.fechaServicio]);
 
+  const batchServiceRows = useMemo(() => {
+    return batchSelectedServices.map((serviceName) => {
+      const projection = calculateServiceProjection(
+        serviceName,
+        batchServiceForm.fechaServicio,
+        batchServiceForm.kmServicio
+      );
+
+      return {
+        serviceName,
+        proximoServicioKm: projection.proximoServicioKm,
+        proximaFecha: projection.proximaFecha,
+      };
+    });
+  }, [batchSelectedServices, batchServiceForm.fechaServicio, batchServiceForm.kmServicio]);
+
   const closeClientModal = () => {
     if (isSaving) {
       return;
@@ -367,6 +423,9 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
     setIsServiceModalOpen(false);
     setEditingServiceId(null);
     setServiceForm(INITIAL_SERVICE_FORM);
+    setBatchServiceForm({ fechaServicio: '', kmServicio: 0 });
+    setBatchServiceSelection('');
+    setBatchSelectedServices([]);
     setSelectedServiceClientId('');
   };
 
@@ -396,6 +455,9 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
   const openCreateService = () => {
     setEditingServiceId(null);
     setServiceForm(INITIAL_SERVICE_FORM);
+    setBatchServiceForm({ fechaServicio: '', kmServicio: 0 });
+    setBatchServiceSelection('');
+    setBatchSelectedServices([]);
     setSelectedServiceClientId(selectedClientId ?? clients[0]?.id ?? '');
     setIsServiceModalOpen(true);
   };
@@ -521,17 +583,17 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
     setIsSaving(true);
     setErrorMessage('');
 
-    const payload = {
-      client_id: selectedServiceClientId,
-      servicio_realizado: serviceForm.servicioRealizado,
-      fecha_servicio: serviceForm.fechaServicio,
-      km_servicio: serviceForm.kmServicio,
-      proximo_servicio_km: serviceForm.proximoServicioKm,
-      proxima_fecha: serviceForm.proximaFecha,
-    };
-
     try {
       if (editingServiceId) {
+        const payload = {
+          client_id: selectedServiceClientId,
+          servicio_realizado: serviceForm.servicioRealizado,
+          fecha_servicio: serviceForm.fechaServicio,
+          km_servicio: serviceForm.kmServicio,
+          proximo_servicio_km: serviceForm.proximoServicioKm,
+          proxima_fecha: serviceForm.proximaFecha,
+        };
+
         const { data, error } = await supabase
           .from('client_services')
           .update(payload)
@@ -546,11 +608,38 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
         const mapped = mapServiceRow(data as ServiceRow);
         setServices((previous) => previous.map((service) => (service.id === mapped.id ? mapped : service)));
       } else {
-        const { data, error } = await supabase.from('client_services').insert(payload).select('*').single();
-        if (error) {
-          throw new Error('No se pudo crear el servicio.');
+        if (!batchServiceForm.fechaServicio || !Number.isFinite(batchServiceForm.kmServicio)) {
+          throw new Error('Captura fecha y km de servicio para crear los servicios.');
         }
-        setServices((previous) => [mapServiceRow(data as ServiceRow), ...previous]);
+
+        if (batchSelectedServices.length === 0) {
+          throw new Error('Agrega al menos un servicio para registrar.');
+        }
+
+        const payloads = batchSelectedServices.map((serviceName) => {
+          const projection = calculateServiceProjection(
+            serviceName,
+            batchServiceForm.fechaServicio,
+            batchServiceForm.kmServicio
+          );
+
+          return {
+            client_id: selectedServiceClientId,
+            servicio_realizado: serviceName,
+            fecha_servicio: batchServiceForm.fechaServicio,
+            km_servicio: batchServiceForm.kmServicio,
+            proximo_servicio_km: projection.proximoServicioKm,
+            proxima_fecha: projection.proximaFecha,
+          };
+        });
+
+        const { data, error } = await supabase.from('client_services').insert(payloads).select('*');
+        if (error) {
+          throw new Error('No se pudieron crear los servicios.');
+        }
+
+        const mappedServices = (data as ServiceRow[]).map(mapServiceRow);
+        setServices((previous) => [...mappedServices, ...previous]);
       }
 
       closeServiceModal();
@@ -567,6 +656,24 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
 
   const openDeleteService = (service: ClientServiceRecord) => {
     setDeleteTarget({ type: 'service', id: service.id, title: service.servicioRealizado });
+  };
+
+  const addBatchService = () => {
+    if (!batchServiceSelection) {
+      return;
+    }
+
+    setBatchSelectedServices((previous) => {
+      if (previous.includes(batchServiceSelection)) {
+        return previous;
+      }
+      return [...previous, batchServiceSelection];
+    });
+    setBatchServiceSelection('');
+  };
+
+  const removeBatchService = (serviceName: string) => {
+    setBatchSelectedServices((previous) => previous.filter((service) => service !== serviceName));
   };
 
   const closeDeleteModal = () => {
@@ -802,95 +909,127 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
               Primero crea o selecciona un cliente.
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-gray-200">
-              <table className="min-w-full divide-y divide-gray-200 text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Cliente</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Placas</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Vehículo</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Servicio realizado</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Fecha de servicio</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Km en servicio</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Próximo servicio</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Próxima fecha</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Estado</th>
-                    <th className="px-3 py-3 text-left font-semibold text-slate-700">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
-                  {isLoadingServices ? (
-                    <tr>
-                      <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
-                        Cargando servicios...
-                      </td>
-                    </tr>
-                  ) : filteredServices.length === 0 ? (
-                    <tr>
-                      <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
-                        No hay servicios que coincidan con el filtro.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredServices.map((service) => {
-                      const relatedClient = clientById.get(service.clientId);
-                      if (!relatedClient) {
-                        return null;
-                      }
+            <>
+              <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                <span className="font-semibold text-slate-800">Clave de colores (Próxima fecha):</span>
+                <span className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-red-700">
+                  Vencido
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                  Próximo (14 días)
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700">
+                  En tiempo
+                </span>
+                <span className="inline-flex items-center gap-2 text-gray-500">Sin próxima fecha no se colorea.</span>
+              </div>
 
-                      const kmDue =
-                        service.proximoServicioKm !== null && relatedClient.kmActual >= service.proximoServicioKm;
-                      const nearDate = isNextDateNear(service.proximaFecha);
-                      const rowClass = kmDue ? 'bg-red-50' : nearDate ? 'bg-amber-50' : '';
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Cliente</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Placas</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Vehículo</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Servicio realizado</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Fecha de servicio</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Km en servicio</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Próximo servicio</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Próxima fecha</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Estado</th>
+                      <th className="px-3 py-3 text-left font-semibold text-slate-700">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {isLoadingServices ? (
+                      <tr>
+                        <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                          Cargando servicios...
+                        </td>
+                      </tr>
+                    ) : filteredServices.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                          No hay servicios que coincidan con el filtro.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredServices.map((service) => {
+                        const relatedClient = clientById.get(service.clientId);
+                        if (!relatedClient) {
+                          return null;
+                        }
 
-                      return (
-                        <tr key={service.id} className={rowClass}>
-                          <td className="whitespace-nowrap px-3 py-3 font-medium text-slate-900">
-                            {relatedClient.cliente}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-3">{relatedClient.placas}</td>
-                          <td className="whitespace-nowrap px-3 py-3">
-                            {relatedClient.vehiculo} {relatedClient.modelo}
-                          </td>
-                          <td className="px-3 py-3">{service.servicioRealizado}</td>
-                          <td className="whitespace-nowrap px-3 py-3">{formatDate(service.fechaServicio)}</td>
-                          <td className="whitespace-nowrap px-3 py-3">
-                            {service.kmServicio.toLocaleString('es-MX')}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-3">
-                            {service.proximoServicioKm === null
-                              ? '-'
-                              : service.proximoServicioKm.toLocaleString('es-MX')}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-3">{formatDate(service.proximaFecha)}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-xs font-semibold text-slate-700">
-                            {kmDue ? 'Km vencido' : nearDate ? 'Fecha próxima' : 'En tiempo'}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-3">
-                            <div className="flex gap-2">
-                              <Button
-                                variant="outline"
-                                className="px-3 py-1 text-sm"
-                                onClick={() => openEditService(service)}
-                              >
-                                Editar
-                              </Button>
-                              <Button
-                                variant="outline"
-                                className="px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                                onClick={() => openDeleteService(service)}
-                              >
-                                Eliminar
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                        const dateUrgency = getDateUrgency(service.proximaFecha);
+                        const statusLabel =
+                          dateUrgency === 'due'
+                            ? 'Vencido'
+                            : dateUrgency === 'near'
+                              ? 'Próximo'
+                              : dateUrgency === 'on-time'
+                                ? 'En tiempo'
+                                : 'Sin fecha';
+
+                        const nextDateCellClass =
+                          dateUrgency === 'due'
+                            ? 'bg-red-100 text-red-800 font-semibold'
+                            : dateUrgency === 'near'
+                              ? 'bg-amber-100 text-amber-800 font-semibold'
+                              : dateUrgency === 'on-time'
+                                ? 'bg-emerald-100 text-emerald-800 font-semibold'
+                                : '';
+
+                        return (
+                          <tr key={service.id}>
+                            <td className="whitespace-nowrap px-3 py-3 font-medium text-slate-900">
+                              {relatedClient.cliente}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-3">{relatedClient.placas}</td>
+                            <td className="whitespace-nowrap px-3 py-3">
+                              {relatedClient.vehiculo} {relatedClient.modelo}
+                            </td>
+                            <td className="px-3 py-3">{service.servicioRealizado}</td>
+                            <td className="whitespace-nowrap px-3 py-3">{formatDate(service.fechaServicio)}</td>
+                            <td className="whitespace-nowrap px-3 py-3">
+                              {service.kmServicio.toLocaleString('es-MX')}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-3">
+                              {service.proximoServicioKm === null
+                                ? '-'
+                                : service.proximoServicioKm.toLocaleString('es-MX')}
+                            </td>
+                            <td className={`whitespace-nowrap px-3 py-3 ${nextDateCellClass}`}>
+                              {formatDate(service.proximaFecha)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-3 text-xs font-semibold text-slate-700">
+                              {statusLabel}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-3">
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  className="px-3 py-1 text-sm"
+                                  onClick={() => openEditService(service)}
+                                >
+                                  Editar
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  className="px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                                  onClick={() => openDeleteService(service)}
+                                >
+                                  Eliminar
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       </div>
@@ -1051,80 +1190,177 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
                   ))}
                 </select>
               </label>
-              <label className="text-sm font-medium text-gray-700 sm:col-span-2">
-                Servicio realizado
-                <select
-                  required
-                  value={serviceForm.servicioRealizado}
-                  onChange={(event) =>
-                    setServiceForm((previous) => ({ ...previous, servicioRealizado: event.target.value }))
-                  }
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                >
-                  <option value="">Selecciona un servicio</option>
-                  {serviceOptions.map((serviceName) => (
-                    <option key={serviceName} value={serviceName}>
-                      {serviceName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-medium text-gray-700">
-                Fecha de servicio
-                <input
-                  required
-                  type="date"
-                  value={serviceForm.fechaServicio}
-                  onChange={(event) =>
-                    setServiceForm((previous) => ({ ...previous, fechaServicio: event.target.value }))
-                  }
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </label>
-              <label className="text-sm font-medium text-gray-700">
-                Km en servicio
-                <input
-                  required
-                  type="number"
-                  min={0}
-                  value={serviceForm.kmServicio === 0 ? '' : serviceForm.kmServicio}
-                  placeholder="Ingresa km del servicio"
-                  onChange={(event) =>
-                    setServiceForm((previous) => ({ ...previous, kmServicio: parseNumber(event.target.value) }))
-                  }
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </label>
-              <label className="text-sm font-medium text-gray-700">
-                Próximo servicio (km/millas)
-                <input
-                  type="text"
-                  value={
-                    serviceForm.proximoServicioKm === null
-                      ? ''
-                      : serviceForm.proximoServicioKm.toLocaleString('es-MX')
-                  }
-                  readOnly
-                  placeholder="Se calcula automáticamente"
-                  className="mt-1 w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-slate-900"
-                />
-              </label>
-              <label className="text-sm font-medium text-gray-700">
-                Próxima fecha
-                <input
-                  type="text"
-                  value={serviceForm.proximaFecha ?? ''}
-                  readOnly
-                  placeholder="Se calcula automáticamente"
-                  className="mt-1 w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-slate-900"
-                />
-              </label>
+              {editingServiceId ? (
+                <>
+                  <label className="text-sm font-medium text-gray-700 sm:col-span-2">
+                    Servicio realizado
+                    <select
+                      required
+                      value={serviceForm.servicioRealizado}
+                      onChange={(event) =>
+                        setServiceForm((previous) => ({ ...previous, servicioRealizado: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="">Selecciona un servicio</option>
+                      {serviceOptions.map((serviceName) => (
+                        <option key={serviceName} value={serviceName}>
+                          {serviceName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium text-gray-700">
+                    Fecha de servicio
+                    <input
+                      required
+                      type="date"
+                      value={serviceForm.fechaServicio}
+                      onChange={(event) =>
+                        setServiceForm((previous) => ({ ...previous, fechaServicio: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-gray-700">
+                    Km en servicio
+                    <input
+                      required
+                      type="number"
+                      min={0}
+                      value={serviceForm.kmServicio === 0 ? '' : serviceForm.kmServicio}
+                      placeholder="Ingresa km del servicio"
+                      onChange={(event) =>
+                        setServiceForm((previous) => ({ ...previous, kmServicio: parseNumber(event.target.value) }))
+                      }
+                      className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-gray-700">
+                    Próximo servicio (km/millas)
+                    <input
+                      type="text"
+                      value={
+                        serviceForm.proximoServicioKm === null
+                          ? ''
+                          : serviceForm.proximoServicioKm.toLocaleString('es-MX')
+                      }
+                      readOnly
+                      placeholder="Se calcula automáticamente"
+                      className="mt-1 w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-slate-900"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-gray-700">
+                    Próxima fecha
+                    <input
+                      type="text"
+                      value={serviceForm.proximaFecha ?? ''}
+                      readOnly
+                      placeholder="Se calcula automáticamente"
+                      className="mt-1 w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-slate-900"
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label className="text-sm font-medium text-gray-700">
+                    Fecha de servicio
+                    <input
+                      required
+                      type="date"
+                      value={batchServiceForm.fechaServicio}
+                      onChange={(event) =>
+                        setBatchServiceForm((previous) => ({ ...previous, fechaServicio: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-gray-700">
+                    Km en servicio
+                    <input
+                      required
+                      type="number"
+                      min={0}
+                      value={batchServiceForm.kmServicio === 0 ? '' : batchServiceForm.kmServicio}
+                      placeholder="Ingresa km del servicio"
+                      onChange={(event) =>
+                        setBatchServiceForm((previous) => ({ ...previous, kmServicio: parseNumber(event.target.value) }))
+                      }
+                      className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </label>
+                  <div className="sm:col-span-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <span className="block text-sm font-medium text-gray-700">Servicios de esta visita</span>
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                      <select
+                        value={batchServiceSelection}
+                        onChange={(event) => setBatchServiceSelection(event.target.value)}
+                        className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      >
+                        <option value="">Selecciona un servicio para agregar</option>
+                        {Object.keys(SERVICE_INTERVALS).map((serviceName) => (
+                          <option key={serviceName} value={serviceName}>
+                            {serviceName}
+                          </option>
+                        ))}
+                      </select>
+                      <Button type="button" variant="outline" onClick={addBatchService}>
+                        Agregar
+                      </Button>
+                    </div>
+
+                    {batchServiceRows.length === 0 ? (
+                      <p className="mt-3 text-sm text-gray-600">Aún no agregas servicios para esta visita.</p>
+                    ) : (
+                      <div className="mt-3 overflow-x-auto rounded-md border border-gray-200 bg-white">
+                        <table className="min-w-full divide-y divide-gray-200 text-sm">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-700">Servicio</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-700">Próximo servicio</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-700">Próxima fecha</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-700">Acción</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100 bg-white">
+                            {batchServiceRows.map((row) => (
+                              <tr key={row.serviceName}>
+                                <td className="px-3 py-2">{row.serviceName}</td>
+                                <td className="whitespace-nowrap px-3 py-2">
+                                  {row.proximoServicioKm === null
+                                    ? '-'
+                                    : row.proximoServicioKm.toLocaleString('es-MX')}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2">{formatDate(row.proximaFecha)}</td>
+                                <td className="px-3 py-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                                    onClick={() => removeBatchService(row.serviceName)}
+                                  >
+                                    Quitar
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
               <div className="sm:col-span-2 flex flex-wrap justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={closeServiceModal}>
                   Cancelar
                 </Button>
                 <Button type="submit" disabled={isSaving || !selectedServiceClientId}>
-                  {isSaving ? 'Guardando...' : editingServiceId ? 'Actualizar servicio' : 'Crear servicio'}
+                  {isSaving
+                    ? 'Guardando...'
+                    : editingServiceId
+                      ? 'Actualizar servicio'
+                      : `Crear ${batchSelectedServices.length || 0} servicio(s)`}
                 </Button>
               </div>
             </form>
