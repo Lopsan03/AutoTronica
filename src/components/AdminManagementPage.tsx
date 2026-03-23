@@ -191,6 +191,14 @@ const parseNumber = (value: string) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const parseServiceDate = (dateValue: string | null) => {
+  if (!dateValue) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  return new Date(`${dateValue}T00:00:00`).getTime();
+};
+
 const buildFilePath = (clientId: string, fileName: string) => {
   const ext = fileName.split('.').pop() || 'jpg';
   return `${clientId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -245,7 +253,7 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
   const filteredServices = useMemo(() => {
     const normalized = searchService.trim().toLowerCase();
 
-    return services.filter((service) => {
+    const filtered = services.filter((service) => {
       const client = clientById.get(service.clientId);
       if (!client) {
         return false;
@@ -267,6 +275,15 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
         .toLowerCase();
 
       return searchable.includes(normalized);
+    });
+
+    return filtered.sort((a, b) => {
+      const nextDateDiff = parseServiceDate(a.proximaFecha) - parseServiceDate(b.proximaFecha);
+      if (nextDateDiff !== 0) {
+        return nextDateDiff;
+      }
+
+      return parseServiceDate(a.fechaServicio) - parseServiceDate(b.fechaServicio);
     });
   }, [services, clientById, searchService]);
 
@@ -338,7 +355,8 @@ const AdminManagementPage: React.FC<AdminManagementPageProps> = ({ onLogout }) =
     const { data, error } = await supabase
       .from('client_services')
       .select('*')
-      .order('fecha_servicio', { ascending: false });
+      .order('proxima_fecha', { ascending: true, nullsFirst: false })
+      .order('fecha_servicio', { ascending: true });
 
     if (error) {
       setErrorMessage('No se pudieron cargar los servicios del cliente.');
